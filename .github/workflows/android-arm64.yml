@@ -23,7 +23,9 @@ jobs:
         run: |
           rustup toolchain install 1.99.0 --profile minimal --target aarch64-linux-android
           cargo +1.99.0 install cargo-apk --version '=0.10.0' --locked
-          sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018'
+      - name: Install Android packages
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018'
       - name: Assemble, test, package and verify
         run: scripts/ci-arm64.sh "$RUNNER_TEMP/wordcraft"
       - name: Upload signed test APK, checksum and notices
