@@ -3,9 +3,9 @@
 //!
 //! # What this crate is
 //!
-//! A shell around the *unmodified* WordCraft crates — `wordcraft-engine` (the document model,
+//! A shell around the pinned WordCraft crates — `wordcraft-engine` (the document model,
 //! the command registry, file formats) and `wordcraft-ui-egui` (the ribbon, rulers, panes,
-//! Backstage and every dialog). Nothing in those crates is patched. This crate supplies only
+//! Backstage and every dialog). The port patches the UI hooks and canvas. This crate supplies
 //! what `apps/wordcraft` would normally supply: the [`Services`] implementation, the
 //! preferences file, the window options and the entry point. The same shape the PhotoCraft and
 //! VectorCraft ports used.
@@ -39,14 +39,8 @@
 //!
 //! Honest gaps, not oversights:
 //!
-//! - **File dialogs are drawn by the app itself** ([`file_picker`]). WordCraft's `Services`
-//!   already has the asynchronous seam for exactly this (`file_dialog`, a request whose answer
-//!   arrives later through a channel — the desktop shell uses it so the window never freezes),
-//!   so Open, Save As, Export, Insert Picture and the mail-merge recipient list all work: the
-//!   picker browses the app's own folder with no permission at all, and offers a shared-storage
-//!   root only when it can actually read it. Android's *own* picker is still future work: the
-//!   Storage Access Framework needs `startActivityForResult`, which `android-activity` 0.6 does
-//!   not expose.
+//! - Insert/Change Picture uses Android's document picker and the selected URI grant.
+//!   The remaining file operations use the in-app path browser ([`file_picker`]).
 //! - The Android clipboard supplies text and image content URIs. The editor publishes text;
 //!   exposing copied document images to another app still needs a content provider.
 //! - **No system print.** `print` stays `None`, so File ▸ Print has nowhere to hand the PDF.

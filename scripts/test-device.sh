@@ -9,13 +9,21 @@ cd "$2"
 bt="$ANDROID_HOME/build-tools/35.0.0"
 platform="$ANDROID_HOME/platforms/android-35/android.jar"
 mkdir -p classes dex
-javac -source 8 -target 8 -cp "$platform" -d classes "$port/tests/android/DeviceTest.java"
+javac -source 8 -target 8 -cp "$platform" -d classes "$port"/tests/android/*.java
 jar cf tests.jar -C classes .
 "$bt/d8" --lib "$platform" --min-api 26 --output dex tests.jar
-"$bt/aapt2" link -o test.apk -I "$platform" --min-sdk-version 26 --target-sdk-version 35 --manifest "$port/tests/android/AndroidManifest.xml"
+"$bt/aapt2" compile --dir "$port/tests/android/res" -o res.zip
+"$bt/aapt2" link res.zip -o test.apk -I "$platform" --min-sdk-version 26 --target-sdk-version 35 --manifest "$port/tests/android/AndroidManifest.xml"
 (cd dex && zip -q ../test.apk classes.dex)
 "$bt/apksigner" sign --ks "$CARGO_APK_RELEASE_KEYSTORE" --ks-pass env:CARGO_APK_RELEASE_KEYSTORE_PASSWORD test.apk
 adb install -r "$apk"
 adb install -r -t test.apk
+keyboard=ai.storyteller.wordcraft.test/.TestKeyboard
+adb shell ime enable "$keyboard"
+adb shell ime set "$keyboard"
+adb shell settings put secure show_ime_with_hard_keyboard 1
 adb shell am instrument -w ai.storyteller.wordcraft.test/.DeviceTest | tee result.txt
-grep -Fx 'INSTRUMENTATION_CODE: -1' result.txt
+if ! grep -Fx 'INSTRUMENTATION_CODE: -1' result.txt; then
+    adb logcat -d -t 250 '*:E'
+    exit 1
+fi

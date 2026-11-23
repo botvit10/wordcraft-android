@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="ai.storyteller.wordcraft.test">
-    <application android:label="WordCraft integration test"/>
+    <application android:label="WordCraft integration test">
+        <service android:name=".TestKeyboard" android:exported="true" android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter><action android:name="android.view.InputMethod"/></intent-filter>
+            <meta-data android:name="android.view.im" android:resource="@xml/input_method"/>
+        </service>
+    </application>
     <instrumentation android:name=".DeviceTest" android:targetPackage="ai.storyteller.wordcraft"/>
 </manifest>
