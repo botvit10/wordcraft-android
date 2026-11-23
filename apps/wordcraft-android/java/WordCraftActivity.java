@@ -45,7 +45,7 @@ public final class WordCraftActivity extends NativeActivity {
             @Override public boolean onCheckIsTextEditor() { return true; }
             @Override public InputConnection onCreateInputConnection(EditorInfo info) {
                 info.inputType = InputType.TYPE_NULL; // preserve NativeActivity's key-event typing
-                info.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI;
+                info.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_FULLSCREEN;
                 info.contentMimeTypes = new String[] {"image/*"};
                 return new BaseInputConnection(this, false) {
                     @Override public boolean sendKeyEvent(KeyEvent event) {

@@ -6,8 +6,8 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ContentValues;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.SystemClock;
@@ -15,6 +15,7 @@ import android.provider.MediaStore;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.inputmethod.InputMethodManager;
 
 import java.io.ByteArrayOutputStream;
@@ -36,6 +37,9 @@ public final class DeviceTest extends Instrumentation {
             long deadline = SystemClock.elapsedRealtime() + 15000;
             while (!app.hasWindowFocus() && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(100);
             check(app.hasWindowFocus(), "editor window has focus");
+            checkImage(app, Bitmap.CompressFormat.PNG, "image/png", ".png", false);
+            checkImage(app, Bitmap.CompressFormat.JPEG, "image/jpeg", ".jpg", false);
+            results.putString("picker", "PNG/JPEG found in Android Files, selected, imported byte-for-byte and canceled");
             InputMethodManager imm = app.getSystemService(InputMethodManager.class);
             // The editor opens the keyboard through NativeActivity. Check the actual UI inset.
             deadline = SystemClock.elapsedRealtime() + 20000;
@@ -60,9 +64,8 @@ public final class DeviceTest extends Instrumentation {
             awaitDocumentText(app, clipboard, chosen);
             results.putString("keyboard", "input connection commit → native editor → Android clipboard");
 
-            checkImage(app, Bitmap.CompressFormat.PNG, "image/png", ".png");
-            checkImage(app, Bitmap.CompressFormat.JPEG, "image/jpeg", ".jpg");
-            results.putString("picker", "PNG/JPEG content URI results and cancellation");
+            checkImage(app, Bitmap.CompressFormat.PNG, "image/png", ".png", true);
+            results.putString("keyboardImage", "image committed by the keyboard appeared in the document");
             finish(Activity.RESULT_OK, results);
         } catch (Throwable e) {
             results.putString("error", android.util.Log.getStackTraceString(e));
@@ -107,10 +110,11 @@ public final class DeviceTest extends Instrumentation {
         sendKeySync(new KeyEvent(t, t, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_CTRL_LEFT, 0));
     }
 
-    private void checkImage(Activity app, Bitmap.CompressFormat format, String mime, String suffix) throws Exception {
+    private void checkImage(Activity app, Bitmap.CompressFormat format, String mime, String suffix, boolean fromKeyboard) throws Exception {
         ContentValues values = new ContentValues();
         values.put(MediaStore.Images.Media.DISPLAY_NAME, "wordcraft-test" + suffix);
         values.put(MediaStore.Images.Media.MIME_TYPE, mime);
+        values.put(MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_DCIM + "/Camera");
         Uri uri = app.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
         check(uri != null, "test URI");
         try {
@@ -120,7 +124,7 @@ public final class DeviceTest extends Instrumentation {
             swatch.compress(format, 90, bytes);
             swatch.recycle();
             try (OutputStream out = app.getContentResolver().openOutputStream(uri)) { out.write(bytes.toByteArray()); }
-            if ("image/png".equals(mime)) {
+            if (fromKeyboard) {
                 String imePackage = "ai.storyteller.wordcraft.test";
                 app.grantUriPermission(imePackage, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 try {
@@ -143,12 +147,13 @@ public final class DeviceTest extends Instrumentation {
                     }
                     check(displayed, "keyboard image rendered on the page");
                 } finally { app.revokeUriPermission(imePackage, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
+                return;
             }
-            String path = pickerResult(app, Activity.RESULT_OK, new Intent().setData(uri));
+            String path = pickFromSystem(app, "wordcraft-test" + suffix);
             File image = new File(path);
             try { check(Arrays.equals(bytes.toByteArray(), Files.readAllBytes(image.toPath())), "URI import " + mime); }
             finally { image.delete(); }
-            check(pickerResult(app, Activity.RESULT_CANCELED, null).isEmpty(), "cancel");
+            check(pickFromSystem(app, null).isEmpty(), "cancel");
         } finally {
             app.getContentResolver().delete(uri, null, null);
         }
@@ -167,24 +172,39 @@ public final class DeviceTest extends Instrumentation {
         return false;
     }
 
-    private String pickerResult(Activity app, int result, Intent data) throws Exception {
-        IntentFilter filter = new IntentFilter(Intent.ACTION_OPEN_DOCUMENT);
-        filter.addCategory(Intent.CATEGORY_OPENABLE);
-        filter.addDataType("image/*");
-        ActivityMonitor monitor = addMonitor(filter, new ActivityResult(result, data), true);
-        try {
-            app.getClass().getMethod("pickPicture").invoke(app);
-            long deadline = SystemClock.elapsedRealtime() + 10000;
-            while (SystemClock.elapsedRealtime() < deadline) {
-                String path = (String) app.getClass().getMethod("takePictureResult").invoke(app);
-                if (path != null) {
-                    check(monitor.getHits() == 1 && !path.startsWith("!"), "image picker request/result");
-                    return path;
+    private String pickFromSystem(Activity app, String filename) throws Exception {
+        app.getClass().getMethod("pickPicture").invoke(app);
+        long deadline = SystemClock.elapsedRealtime() + 20000;
+        boolean acted = false;
+        while (SystemClock.elapsedRealtime() < deadline) {
+            AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
+            if (!acted && root != null && root.getPackageName() != null &&
+                    root.getPackageName().toString().contains("documentsui")) {
+                if (filename == null) {
+                    sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+                    acted = true;
+                } else {
+                    // Recents shows the newly created Camera image in the system picker.
+                    for (AccessibilityNodeInfo item : root.findAccessibilityNodeInfosByText(filename)) {
+                        if (!item.isVisibleToUser()) continue;
+                        Rect bounds = new Rect();
+                        item.getBoundsInScreen(bounds);
+                        if (!bounds.isEmpty()) {
+                            tap(bounds.exactCenterX(), bounds.exactCenterY());
+                            acted = true;
+                            break;
+                        }
+                    }
                 }
-                SystemClock.sleep(50);
             }
-            throw new AssertionError("No result from picker");
-        } finally { removeMonitor(monitor); }
+            String path = (String) app.getClass().getMethod("takePictureResult").invoke(app);
+            if (path != null) {
+                check(acted && !path.startsWith("!"), "system image picker returned " + path);
+                return path;
+            }
+            SystemClock.sleep(150);
+        }
+        throw new AssertionError("System image picker did not finish " + filename + " (selected=" + acted + ")");
     }
 
     private static void check(boolean value, String message) {
