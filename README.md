@@ -114,3 +114,7 @@ dual-licensed Apache-2.0 / MIT; both licence texts are kept here. The Android la
 repository is an unofficial modification by [@kanaaka](https://github.com/kanaaka), carrying the
 same licence. Not affiliated with or endorsed by the upstream project. See
 [`ATTRIBUTION.md`](ATTRIBUTION.md).
+
+## Linux and GitHub Actions
+
+The ARM64 test workflow assembles the pinned upstream source, runs the port tests and signs a release-mode APK with a fresh development key. Each successful run uploads `wordcraft-arm64-test` for 14 days. See the [workflow](.github/workflows/android-arm64.yml) and [technical audit and Linux build instructions](docs/AUDITORIA-ANDROID.md).
