@@ -41,14 +41,19 @@ jobs:
           CARGO_APK_RELEASE_KEYSTORE_PASSWORD: android
         run: |
           sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          "$sdk" 'emulator' 'system-images;android-35;google_apis;x86_64'
+          export PATH="$ANDROID_HOME/platform-tools:$PATH"
+          "$sdk" 'platform-tools' 'emulator' 'system-images;android-35;google_apis;x86_64'
           sudo chmod a+rw /dev/kvm
           echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n wordcraft-test -k 'system-images;android-35;google_apis;x86_64'
           "$ANDROID_HOME/emulator/emulator" @wordcraft-test -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
-          trap 'adb emu kill || true' EXIT
+          trap 'rc=$?; if ((rc)); then tail -100 "$RUNNER_TEMP/emulator.log"; adb logcat -b crash -d || true; fi; adb emu kill || true; exit "$rc"' EXIT
           timeout 300 adb wait-for-device
           timeout 300 bash -c 'until adb shell getprop sys.boot_completed | grep -q 1; do sleep 2; done'
           adb shell input keyevent KEYCODE_WAKEUP
           adb shell wm dismiss-keyguard
+          adb shell wm size 800x1280
+          adb shell wm density 160
+          adb shell settings put system accelerometer_rotation 0
+          adb shell settings put system user_rotation 1
           export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/wordcraft/test.keystore"
           scripts/test-device.sh "$RUNNER_TEMP/wordcraft/artifact/wordcraft-arm64-test.apk" "$RUNNER_TEMP/instrumentation"

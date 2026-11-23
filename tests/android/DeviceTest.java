@@ -13,6 +13,8 @@ import android.os.Bundle;
 import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
+import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 
 import java.io.ByteArrayOutputStream;
@@ -37,7 +39,11 @@ public final class DeviceTest extends Instrumentation {
             InputMethodManager imm = app.getSystemService(InputMethodManager.class);
             // The editor opens the keyboard through NativeActivity. Check the actual UI inset.
             deadline = SystemClock.elapsedRealtime() + 20000;
-            while (height(app) < 1 && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(100);
+            while (height(app) < 1 && SystemClock.elapsedRealtime() < deadline) {
+                View page = app.getWindow().getDecorView();
+                tap(page.getWidth() * 0.5f, page.getHeight() * 0.55f);
+                SystemClock.sleep(1000);
+            }
             check(height(app) > 0 && height(app) < app.getWindow().getDecorView().getHeight(), "visible keyboard inset");
             results.putString("imeInsets", "observed keyboard overlap");
 
@@ -83,6 +89,16 @@ public final class DeviceTest extends Instrumentation {
         check(copied, "keyboard content reached the native document");
     }
 
+    private void tap(float x, float y) {
+        long t = SystemClock.uptimeMillis();
+        for (int action : new int[] {MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
+            MotionEvent event = MotionEvent.obtain(t, SystemClock.uptimeMillis(), action, x, y, 0);
+            event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+            sendPointerSync(event);
+            event.recycle();
+        }
+    }
+
     private void chord(int key) {
         long t = SystemClock.uptimeMillis();
         sendKeySync(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_CTRL_LEFT, 0));
@@ -118,7 +134,10 @@ public final class DeviceTest extends Instrumentation {
                         SystemClock.sleep(500);
                         Bitmap screen = getUiAutomation().takeScreenshot();
                         if (screen != null) {
-                            displayed = hasSwatch(screen);
+                            Bitmap readable = screen.getConfig() == Bitmap.Config.HARDWARE
+                                    ? screen.copy(Bitmap.Config.ARGB_8888, false) : screen;
+                            displayed = hasSwatch(readable);
+                            if (readable != screen) readable.recycle();
                             screen.recycle();
                         }
                     }
