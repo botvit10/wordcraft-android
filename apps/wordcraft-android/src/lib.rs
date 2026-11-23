@@ -47,9 +47,8 @@
 //!   root only when it can actually read it. Android's *own* picker is still future work: the
 //!   Storage Access Framework needs `startActivityForResult`, which `android-activity` 0.6 does
 //!   not expose.
-//! - **No system clipboard.** `arboard` has no Android backend, so `clipboard_picture` stays
-//!   `None`: Paste still handles text through egui, but a picture copied in another app is not
-//!   offered.
+//! - The Android clipboard supplies text and image content URIs. The editor publishes text;
+//!   exposing copied document images to another app still needs a content provider.
 //! - **No system print.** `print` stays `None`, so File ▸ Print has nowhere to hand the PDF.
 //! - **No stylus pressure or tilt.** A pen degrades to ordinary touch; Android does expose both
 //!   on `MotionEvent`, so a backend is writable, but it does not exist yet.
@@ -68,6 +67,8 @@ use std::time::Duration;
 use wordcraft_engine::Session;
 use wordcraft_ui_egui::{FileDialogRequest, Services, UiState, WordApp};
 
+#[cfg(target_os = "android")]
+mod clipboard;
 mod file_picker;
 mod modifiers;
 mod prefs_watch;
@@ -112,20 +113,6 @@ fn prefs_bytes(app: &WordApp) -> Vec<u8> {
     serde_json::to_vec_pretty(&app.prefs()).unwrap_or_default()
 }
 
-/// The file types Open offers, as on the desktop: pictures for Insert/Change Picture, recipient
-/// lists for Select Recipients ▸ Use an Existing List…, documents otherwise.
-///
-/// The desktop's trailing "All files" filter (`&["*"]`) is dropped: it is a wildcard the picker
-/// has nothing to match against, and listing every file on a tablet's shared storage to sort
-/// through is worse than the filter.
-fn open_extensions(purpose: &str) -> Option<Vec<String>> {
-    match purpose {
-        "picture" => file_picker::extensions(&[&["png", "jpg", "jpeg", "gif", "webp", "bmp"]]),
-        "recipients" => file_picker::extensions(&[&["csv", "tsv", "txt", "xlsx", "xlsm", "ods"]]),
-        _ => file_picker::extensions(&[&["docx", "docm", "dotx", "dotm", "doc", "dot", "odt", "rtf", "txt", "md", "html", "htm", "tex", "json"]]),
-    }
-}
-
 /// The `Services::file_dialog` hook: what the desktop shell fills with `rfd::AsyncFileDialog`.
 ///
 /// WordCraft asks for a dialog by sending a [`FileDialogRequest`] and gets a `Receiver` back; it
@@ -137,11 +124,26 @@ fn open_extensions(purpose: &str) -> Option<Vec<String>> {
 /// waiting thread: the picker answers `Vec<PathBuf>`, and the thread turns it into the
 /// `Option<String>` the app is polling for. One thread per pick, and it ends with the request.
 fn file_dialog(req: FileDialogRequest) -> Receiver<Option<String>> {
-    let (kind, title, extensions, suggested) = match req {
-        FileDialogRequest::Open { purpose } => (file_picker::Kind::Open, "Open \u{2014} Android", open_extensions(&purpose), None),
-        FileDialogRequest::Save { name } => (file_picker::Kind::Save, "Save As \u{2014} Android", None, Some(name)),
+    use file_picker::Kind;
+    let (kind, title, suggested) = match req {
+        FileDialogRequest::Open { purpose } => {
+            let (kind, title) = match purpose.as_str() {
+                "picture" => (Kind::Picture, "Insert or change picture"),
+                "document" => (Kind::Document, "Open document"),
+                "recipients" => (Kind::Recipients, "Open recipient list"),
+                _ => {
+                    log::warn!("unknown open purpose: {purpose}");
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let _ = tx.send(None);
+                    return rx;
+                }
+            };
+            log::info!("file picker: {purpose}, extensions {:?}", kind.extensions());
+            (kind, title, None)
+        }
+        FileDialogRequest::Save { name } => (Kind::Save, "Save As — Android", Some(name)),
     };
-    let paths = file_picker::request(kind, title, extensions, suggested);
+    let paths = file_picker::request(kind, title, suggested);
     let (answer, rx) = std::sync::mpsc::channel();
     let waiting = std::thread::Builder::new().name("file dialog".into()).spawn(move || {
         let picked = paths.recv().ok().and_then(|v| v.into_iter().next()).map(|p| p.to_string_lossy().into_owned());
@@ -243,21 +245,13 @@ fn new_window() {
     }
 }
 
-/// The platform-neutral half of the desktop `services()`.
-///
-/// `file_dialog` carries the whole Open/Save As/Export/Insert-Picture path; everything else the
-/// desktop fills — `pick_open`/`pick_save` (the blocking dialogs), the web `open_async`/`inbox`/
-/// `download`, `print` and the clipboard — is deliberately left out. Leaving `pick_open` and
-/// `pick_save` out is what makes the app use `file_dialog` instead of a blocking dialog, and
-/// leaving `download` out is what makes File ▸ Save fall through to Save As rather than looking
-/// for a browser to hand bytes to.
-///
-/// What it supplies is the in-app file picker, and — on Android, the only place with a second window
-/// to open — [`new_window`]; the host build supplies just the picker.
+/// The Android host provides its file picker, system clipboard and second Activity.
 #[cfg(target_os = "android")]
 fn android_services() -> Services {
     Services {
         file_dialog: Some(Box::new(file_dialog)),
+        read_clipboard: Some(Box::new(clipboard::read)),
+        write_clipboard_text: Some(Box::new(clipboard::write_text)),
         new_window: Some(Box::new(new_window)),
         ..Default::default()
     }
@@ -476,6 +470,74 @@ impl eframe::App for Shell {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn typing_space_keeps_the_canvas_ime_active() {
+        let ctx = egui::Context::default();
+        let mut app = WordApp::new(Session::new(Default::default()), android_services());
+        let mut frame = |events| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0))),
+                events, ..Default::default()
+            };
+            let output = ctx.run_ui(input, |ui| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            });
+            let ime = output.platform_output.ime;
+            output.drop_without_applying_deltas();
+            ime
+        };
+        for _ in 0..4 {
+            frame(vec![]);
+        }
+        frame(vec![]).expect("canvas has text focus");
+        let ime = frame(vec![
+            egui::Event::Key { key: egui::Key::Space, physical_key: Some(egui::Key::Space), pressed: true,
+                repeat: false, modifiers: Default::default() },
+            egui::Event::Text(" ".into()),
+        ]).expect("IME stays enabled while typing");
+        assert!(!ime.should_interrupt_composition);
+        assert_eq!(app.session.doc.plain_text(wordcraft_doc::StoryRef::Body), " ");
+    }
+
+    #[test]
+    fn editor_commands_read_and_write_the_host_clipboard() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        use wordcraft_ui_egui::ClipboardContent;
+        let clip = Rc::new(RefCell::new(String::from("ação")));
+        let read = Rc::clone(&clip);
+        let write = Rc::clone(&clip);
+        let services = Services {
+            read_clipboard: Some(Box::new(move || Ok(Some(ClipboardContent::Text(read.borrow().clone()))))),
+            write_clipboard_text: Some(Box::new(move |text| { *write.borrow_mut() = text.into(); Ok(()) })),
+            ..android_services()
+        };
+        let mut app = WordApp::new(Session::new(Default::default()), services);
+        app.run("edit.paste", json!({})).unwrap();
+        assert_eq!(app.session.doc.plain_text(wordcraft_doc::StoryRef::Body), "ação");
+        app.run("select.all", json!({})).unwrap();
+        clip.borrow_mut().clear();
+        app.run("edit.copy", json!({})).unwrap();
+        assert_eq!(&*clip.borrow(), "ação");
+    }
+
+    #[test]
+    fn paste_external_image_into_document() {
+        use wordcraft_ui_egui::ClipboardContent;
+        let png = include_bytes!("../res/mipmap-mdpi/ic_launcher.png");
+        let services = Services {
+            read_clipboard: Some(Box::new(|| Ok(Some(ClipboardContent::Image(png.to_vec()))))),
+            ..android_services()
+        };
+        let mut app = WordApp::new(Session::new(Default::default()), services);
+        app.run("edit.paste", json!({})).unwrap();
+        assert!(app.session.doc.media.values().any(|media| media.as_slice() == png));
+    }
+
     /// The vendored winit is what lets a mouse or a trackpad scroll an Android build at all.
     /// Upstream's Android backend drops `MotionAction::Scroll` and `HoverMove` (they fall into
     /// `_ => None // TODO mouse events`), so a dependency bump that resolves winit from crates.io

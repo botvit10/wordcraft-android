@@ -76,8 +76,10 @@ const SHARED_ROOT: &str = "/storage/emulated/0";
 /// Which dialog is open.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
-    /// One file to open.
-    Open,
+    Document,
+    Recipients,
+    /// An image to insert or replace.
+    Picture,
     /// Several files.
     OpenMany,
     /// A path to save to.
@@ -86,12 +88,21 @@ pub enum Kind {
     Folder,
 }
 
+impl Kind {
+    pub fn extensions(self) -> Option<&'static [&'static str]> {
+        match self {
+            Self::Picture => Some(&["png", "jpg", "jpeg", "gif", "webp", "bmp"]),
+            Self::Document => Some(&["docx", "docm", "dotx", "dotm", "doc", "dot", "odt", "rtf", "txt", "md", "html", "htm", "tex", "json"]),
+            Self::Recipients => Some(&["csv", "tsv", "txt", "xlsx", "xlsm", "ods"]),
+            Self::OpenMany | Self::Save | Self::Folder => None,
+        }
+    }
+}
+
 /// The dialog being shown: what was asked, and how to answer it.
 struct Pending {
     kind: Kind,
     title: String,
-    /// Extensions the listing is filtered to (none: every file).
-    extensions: Option<Vec<String>>,
     /// Directory being browsed.
     dir: PathBuf,
     /// File name for a Save dialog.
@@ -111,23 +122,12 @@ thread_local! {
     static PENDING: RefCell<Option<Pending>> = const { RefCell::new(None) };
 }
 
-/// Every extension a filter list offers, or `None` when it offers none (then
-/// every file is listed). Convenience for the call sites that build filters.
-///
-/// Not every app reaches every entry point in this file; it is one file shared by four shells, so
-/// an unused one is expected rather than a mistake to delete.
-#[allow(dead_code)]
-pub fn extensions(filters: &[&[&str]]) -> Option<Vec<String>> {
-    let exts: Vec<String> = filters.iter().flat_map(|e| e.iter().map(|s| (*s).to_string())).collect();
-    (!exts.is_empty()).then_some(exts)
-}
-
 /// Queue a dialog and return the receiver its answer arrives on.
 ///
 /// A dialog already open in *this* window is answered "cancelled" first; the app
 /// can only use one answer at a time, and leaving the old request waiting would
 /// strand it.
-pub fn request(kind: Kind, title: &str, extensions: Option<Vec<String>>, suggested: Option<String>) -> Receiver<Vec<PathBuf>> {
+pub fn request(kind: Kind, title: &str, suggested: Option<String>) -> Receiver<Vec<PathBuf>> {
     let (tx, rx) = channel();
     PENDING.with(|slot| {
         let mut slot = slot.borrow_mut();
@@ -139,7 +139,6 @@ pub fn request(kind: Kind, title: &str, extensions: Option<Vec<String>>, suggest
         *slot = Some(Pending {
             kind,
             title: title.to_string(),
-            extensions,
             dir: PathBuf::new(),
             name: suggested.unwrap_or_default(),
             picked: Vec::new(),
@@ -276,7 +275,7 @@ fn readable(dir: &Path) -> bool {
 }
 
 /// Directory entries, folders first, filtered by `extensions` when given.
-fn entries(dir: &Path, extensions: Option<&Vec<String>>) -> Result<(Vec<PathBuf>, Vec<PathBuf>), String> {
+fn entries(dir: &Path, extensions: Option<&[&str]>) -> Result<(Vec<PathBuf>, Vec<PathBuf>), String> {
     let rd = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let (mut dirs, mut files) = (Vec::new(), Vec::new());
     for entry in rd.flatten() {
@@ -318,7 +317,8 @@ pub fn draw(ctx: &egui::Context) {
     // First frame: pick a starting directory.
     if !pending.started {
         pending.started = true;
-        pending.dir = default_dir();
+        let downloads = Path::new(SHARED_ROOT).join("Download");
+        pending.dir = if kind == Kind::Picture && readable(&downloads) { downloads } else { default_dir() };
         if kind == Kind::Save && pending.name.is_empty() {
             pending.name = "untitled".to_string();
         }
@@ -329,7 +329,7 @@ pub fn draw(ctx: &egui::Context) {
     let mut navigate: Option<PathBuf> = None;
 
     let dir = pending.dir.clone();
-    let listing = entries(&dir, pending.extensions.as_ref());
+    let listing = entries(&dir, kind.extensions());
     let multi = kind == Kind::OpenMany;
     // A tablet screen is smaller than the desktop default, and in portrait
     // narrower than a hard-coded desktop width. `content_rect` is the area egui
@@ -345,6 +345,8 @@ pub fn draw(ctx: &egui::Context) {
         .default_height(h)
         .default_pos(screen.center() - egui::vec2(w, h) / 2.0)
         .show(ctx, |ui| {
+            let layer = ui.layer_id();
+            ui.memory_mut(|memory| memory.set_modal_layer(layer));
             // Finger-sized rows: the default spacing is sized for a mouse.
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             ui.spacing_mut().button_padding = egui::vec2(10.0, 8.0);
@@ -375,6 +377,9 @@ pub fn draw(ctx: &egui::Context) {
                 ui.label(egui::RichText::new(dir.display().to_string()).monospace().small());
             });
 
+            if kind == Kind::Picture {
+                ui.label("PNG, JPEG, GIF, WebP, BMP");
+            }
             if let Some(note) = &pending.note {
                 ui.colored_label(egui::Color32::from_rgb(220, 160, 60), note);
             }
@@ -445,7 +450,7 @@ pub fn draw(ctx: &egui::Context) {
                         answer = Some(pending.picked.clone());
                     }
                 }
-                Kind::Open => {
+                Kind::Document | Kind::Recipients | Kind::Picture => {
                     if ui.button("Open").clicked() {
                         // A file has to be tapped in the list above for an Open dialog.
                         pending.note = Some("Tap a file to open it.".to_string());
@@ -476,5 +481,92 @@ pub fn draw(ctx: &egui::Context) {
         // second while it waits, so the picker keeps asking for frames itself.
         PENDING.with(|slot| *slot.borrow_mut() = Some(pending));
         ctx.request_repaint();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Session, WordApp, android_services};
+    use egui::{Context, Event, Pos2, RawInput, epaint::Shape};
+    use serde_json::json;
+
+    fn frame(ctx: &Context, events: Vec<Event>) -> egui::FullOutput {
+        let input = RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1000.0, 800.0))),
+            events,
+            ..Default::default()
+        };
+        ctx.run_ui(input, |ui| draw(ui.ctx()))
+    }
+
+    fn label_pos(output: &egui::FullOutput, label: &str) -> Option<Pos2> {
+        output.shapes.iter().find_map(|clipped| match &clipped.shape {
+            Shape::Text(text) if text.galley.text().trim() == label => Some(text.pos + text.galley.size() * 0.5),
+            _ => None,
+        })
+    }
+
+    fn choose(app: &mut WordApp, dir: &Path, cmd: &str, name: &str, visible: &[&str], hidden: &[&str]) {
+        app.run(cmd, json!({})).unwrap();
+        // Substitute a temporary Download directory for the device's shared storage.
+        PENDING.with_borrow_mut(|slot| {
+            let picker = slot.as_mut().expect("command opened the Android picker");
+            picker.dir = dir.to_owned();
+            picker.started = true;
+        });
+        let ctx = Context::default();
+        frame(&ctx, vec![]).drop_without_applying_deltas();
+        let output = frame(&ctx, vec![]);
+        for name in visible {
+            assert!(label_pos(&output, name).is_some(), "{cmd} must list {name}");
+        }
+        for name in hidden {
+            assert!(label_pos(&output, name).is_none(), "{cmd} must hide {name}");
+        }
+        let pos = label_pos(&output, name).unwrap();
+        output.drop_without_applying_deltas();
+        for pressed in [true, false] {
+            frame(&ctx, vec![Event::PointerMoved(pos), Event::PointerButton {
+                pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default(),
+            }]).drop_without_applying_deltas();
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.file_dialog_open() {
+            assert!(std::time::Instant::now() < deadline, "picker did not deliver {name}");
+            ctx.run_ui(Default::default(), |ui| app.logic(ui.ctx())).drop_without_applying_deltas();
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn pictures_and_documents_use_separate_listings_and_actions() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        let image = image::RgbImage::from_pixel(4, 3, image::Rgb([10, 20, 30]));
+        let png = dir.join("diagram.PNG");
+        let jpeg = dir.join("photo.JpEg");
+        image.save(&png).unwrap();
+        image.save(&jpeg).unwrap();
+
+        let doc = dir.join("letter.docx");
+        let mut app = WordApp::new(Session::new(Default::default()), android_services());
+        app.run("file.save", json!({"path": doc})).unwrap();
+        let images = ["diagram.PNG", "photo.JpEg"];
+        for name in images {
+            choose(&mut app, dir, "insert.picture", name, &images, &["letter.docx"]);
+            // Inserting selects the new picture. Place the caret after it for the next insert.
+            app.run("caret.right", json!({})).unwrap();
+        }
+        assert_eq!(app.session.doc.media.len(), 2);
+        for file in [&png, &jpeg] {
+            let bytes = std::fs::read(file).unwrap();
+            assert!(app.session.doc.media.values().any(|media| media.as_slice() == bytes));
+        }
+        app.run("file.save", json!({"path": doc})).unwrap();
+        let mut reopen = WordApp::new(Session::new(Default::default()), android_services());
+        choose(&mut reopen, dir, "ui.openFileDialog", "letter.docx", &["letter.docx"], &images);
+        assert_eq!(reopen.session.path.as_deref(), Some(doc.as_path()));
+        assert_eq!(reopen.session.doc.media.len(), 2);
     }
 }

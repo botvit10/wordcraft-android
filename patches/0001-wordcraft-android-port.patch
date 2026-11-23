@@ -12,14 +12,45 @@ index 98af82c..be5f8ca 100644
  [workspace]
  resolver = "3"
  members = ["crates/*", "apps/*", "xtask"]
+diff --git a/crates/ui-egui/src/canvas.rs b/crates/ui-egui/src/canvas.rs
+index 06b9087..39f95ae 100644
+--- a/crates/ui-egui/src/canvas.rs
++++ b/crates/ui-egui/src/canvas.rs
+@@ -691,7 +691,10 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+     }
+     // Focus: the canvas takes keyboard focus on click and keeps Tab/arrows.
+     if resp.clicked() || resp.drag_started() || app.canvas.want_focus {
+-        resp.request_focus();
++        // Space and Enter also count as clicks. Requesting focus again interrupts the IME.
++        if !resp.has_focus() {
++            resp.request_focus();
++        }
+         app.canvas.want_focus = false;
+     }
+     if resp.has_focus() {
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index 25b4465..170fffb 100644
+index 25b4465..4e72345 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
-@@ -90,6 +90,10 @@ pub struct Services {
+@@ -61,6 +61,12 @@ use wordcraft_engine::Session;
+ pub use control::ControlRequest;
+ pub use file_dialogs::FileDialogRequest;
+
++/// Content supplied by a native host in response to a user paste command.
++pub enum ClipboardContent {
++    Text(String),
++    Image(Vec<u8>),
++}
++
+ /// Platform services injected by the host (file dialogs, file I/O).
+ #[derive(Default)]
+ pub struct Services {
+@@ -90,6 +96,12 @@ pub struct Services {
      /// Desktop: the picture on the system clipboard, if any — egui's paste only carries text
      /// (#45). Read when Paste finds no text; see [`paste_picture`].
      pub clipboard_picture: Option<Box<dyn Fn() -> Option<paste_picture::ClipboardPicture>>>,
++    pub read_clipboard: Option<Box<dyn Fn() -> Result<Option<ClipboardContent>, String>>>,
++    pub write_clipboard_text: Option<Box<dyn Fn(&str) -> Result<(), String>>>,
 +    /// Host: open a second window on this app, as Window ▸ New Window asks for. Android answers
 +    /// with a second Activity, so two documents can be put side by side. Unset (the desktop, the
 +    /// web, and any host that has no way to) leaves `view.newWindow` showing its dialog.
@@ -27,7 +58,59 @@ index 25b4465..170fffb 100644
  }
  
  /// Files delivered asynchronously.
-@@ -596,6 +600,10 @@ impl WordApp {
+@@ -372,6 +384,36 @@ impl WordApp {
+             self.dialog = Some(dialogs::Dialog::SaveChanges { name, then: id.to_string(), params, document: self.session.document_id() });
+             return Ok(json!({"pending": "saveChanges"}));
+         }
++        let mut params = params;
++        if matches!(id, "edit.paste" | "edit.pasteText" | "edit.pasteMerge" | "edit.pasteSpecial")
++            && params.as_object().is_some_and(|p| p.is_empty())
++            && let Some(read) = &self.services.read_clipboard
++        {
++            match read() {
++                Ok(Some(ClipboardContent::Text(text))) => params["text"] = json!(text),
++                Ok(Some(ClipboardContent::Image(bytes))) if id == "edit.paste" => {
++                    let valid = wordcraft_render::image_size(&bytes).is_some_and(|(w, h)| {
++                        w > 0 && h > 0 && w as usize <= paste_picture::MAX_SIDE && h as usize <= paste_picture::MAX_SIDE
++                            && u64::from(w) * u64::from(h) <= paste_picture::MAX_PIXELS as u64
++                    });
++                    if !valid {
++                        let msg = "Unsupported or oversized clipboard image";
++                        self.status(msg);
++                        return Err(msg.into());
++                    }
++                    return self.execute("insert.picture", json!({"data": wordcraft_engine::cmd::insert::base64_encode(&bytes)}));
++                }
++                Ok(Some(ClipboardContent::Image(_))) => {
++                    self.status("The clipboard contains an image");
++                    return Err("the clipboard contains an image".into());
++                }
++                Ok(None) => {}
++                Err(e) => {
++                    self.status(e.clone());
++                    return Err(e);
++                }
++            }
++        }
+         // Paste without system clipboard text: a picture there is newer than our own copy (copying
+         // here replaces it with text), so it wins (#45).
+         if id == "edit.paste"
+@@ -381,6 +423,14 @@ impl WordApp {
+             return r;
+         }
+         let r = self.execute_user(id, params);
++        if matches!(id, "edit.copy" | "edit.cut")
++            && let Ok(v) = &r
++            && let Some(text) = v.get("text").and_then(Value::as_str).filter(|s| !s.is_empty())
++            && let Some(write) = &self.services.write_clipboard_text
++            && let Err(e) = write(text)
++        {
++            self.status(e);
++        }
+         // Check Accessibility shows its findings in the Accessibility pane, kept up to date there.
+         if id == "file.accessibility" && r.is_ok() {
+             self.session.view.accessibility_pane = true;
+@@ -596,6 +646,10 @@ impl WordApp {
                      self.ui.backstage_page = "options".into();
                  }
                  "pasteSpecial" => self.dialog = Some(dialogs::Dialog::paste_special(self, req)),

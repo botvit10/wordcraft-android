@@ -62,3 +62,21 @@ A compilação de referência na nuvem produziu um APK ARM64 com assinaturas v2/
 2. Medir largura útil, IME e insets em retrato, paisagem e tela dividida. Testar teclado virtual em português, atalhos físicos, mouse, toque e troca de janela. Usar os resultados para definir a faixa compacta e os alvos de toque.
 3. Integrar o seletor Android com ACTION_OPEN_DOCUMENT e ACTION_CREATE_DOCUMENT, persistência das permissões de URI e testes com provedores locais. Preservar acesso privado offline.
 4. Após autorização para atualizar o motor, comparar os commits com o pin atual, revisar as interfaces Services e DOCX/PDF, reavaliar o patch do winit e repetir a mesma matriz de regressão antes de trocar a versão base.
+
+## Teste em aparelho após a base 4ee29b9
+
+O primeiro teste em aparelho confirmou a abertura de DOCX. Em Inserir → Imagens, a pasta Download mostrou documentos e ocultou as imagens. O motor 0.5.0 envia `insertPicture` para a UI, que pede `Open { purpose: "picture" }`. Arquivo → Abrir pede `"document"`. Na base auditada, o caso `"picture"` já incluía PNG e JPEG. O seletor usava `read_dir`, mantinha as pastas visíveis e comparava a última extensão sem distinguir maiúsculas e minúsculas. O código da base não permite atribuir a listagem observada a uma extensão ausente.
+
+O novo seletor mantém o tipo do pedido até desenhar a lista. O modo “Insert or change picture” abre Download se a pasta estiver acessível, mostra os formatos aceitos e mantém o filtro de imagem ao trocar de pasta. O log privado `wordcraft.log` registra a finalidade e as extensões ao abrir o seletor. Permissões de armazenamento do Android ainda determinam quais entradas chegam a `read_dir`.
+
+Espaço e Enter podem ativar um clique de teclado sobre o canvas. No egui 0.36.2, pedir foco novamente interrompe a composição. O egui-winit desativa e reativa a IME, e o winit Android traduz isso em ocultar e mostrar o teclado. O canvas agora pede foco somente quando precisa adquiri-lo.
+
+O backend egui-winit mantém texto em memória no Android. A nova integração dos comandos do editor usa `ClipboardManager` para copiar e recortar texto e para ler a primeira entrada em Colar. Imagens de outro app precisam chegar como uma URI `content://` com MIME de imagem e permissão de leitura. A leitura aceita até 16 MiB de dados codificados. Copiar uma imagem do documento para fora ainda requer publicar os bytes por uma URI com permissão temporária.
+
+No aparelho de teste:
+
+1. Coloque um PNG, um JPEG e um DOCX na mesma pasta Download. Em Inserir → Imagens, confira o título e a lista. Insira cada imagem em uma posição distinta do documento. Salve e reabra pelo menu Arquivo → Abrir. Confira as duas imagens e o filtro de documentos.
+2. Com o teclado virtual em português, digite “ação com espaço”, repita espaços, aceite uma sugestão e pressione Enter. Confira o texto, o cursor e se o teclado permanece aberto.
+3. Copie texto com acentos entre WordCraft e outro app nos dois sentidos. Teste Recortar e Colar pelos menus. Copie uma foto como imagem em outro app e cole no documento. Salve e reabra para conferir a foto.
+
+Se a listagem do aparelho divergir, registre o título do seletor, o caminho exibido, a versão do Android e a permissão concedida. Repita com os mesmos arquivos em App folder para distinguir acesso a Download de filtragem.

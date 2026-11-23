@@ -18,9 +18,7 @@ crate-type = ["cdylib"]
 # Omit `[lints] workspace = true`: the workspace forbids unsafe_code, which trips on the
 # `#[unsafe(no_mangle)]` entry point this crate needs, and nothing else here wants the lints.
 [dependencies]
-# `jni` is the same 0.22 android-activity itself depends on, so this unifies rather than
-# compiling a second JNI layer. It is used for exactly one thing: sending the intent that opens a
-# second window (`new_window`), which no manifest metadata can express (see `src/lib.rs`).
+# Shares android-activity's JNI layer for the system clipboard and second window.
 jni = "0.22"
 wordcraft-doc = { workspace = true }
 wordcraft-engine = { workspace = true }
@@ -46,6 +44,10 @@ eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-nativ
 # Needed to name `AndroidApp` for `NativeOptions::android_app`; eframe does not re-export
 # winit. Pinned to the exact version eframe/egui-winit build against.
 winit = { version = "=0.30.13", default-features = false, features = ["android-native-activity"] }
+
+[dev-dependencies]
+image.workspace = true
+tempfile = "3"
 
 [package.metadata.android]
 package = "ai.storyteller.wordcraft"

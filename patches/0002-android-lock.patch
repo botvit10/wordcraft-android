@@ -9,7 +9,7 @@
  dependencies = [
   "ahash",
   "android-activity",
-@@ -5015,6 +5013,21 @@
+@@ -5015,6 +5013,23 @@
   "wordcraft-doc",
   "wordcraft-engine",
   "wordcraft-ui-egui",
@@ -21,9 +21,11 @@
 +dependencies = [
 + "eframe",
 + "egui",
++ "image",
 + "jni",
 + "log",
 + "serde_json",
++ "tempfile",
 + "winit",
 + "wordcraft-doc",
 + "wordcraft-engine",
