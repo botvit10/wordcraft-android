@@ -10,9 +10,9 @@ and egui interface, packaged as a NativeActivity APK for sideloading on arm64 de
 | Android package | `ai.storyteller.wordcraft` |
 | Published APK | `wordcraft-0.5.0-arm64-v8a-20261013b.apk` — 19.9 MB, arm64-v8a, signed (release **v0.1.2**, 2026-10-13) |
 | APK sha256 | `05065f17c115a5fed20f9ed6f04dcd1cd6b31bd8128e8177031e8d6f9a522ca5` |
-| Upstream files changed | 2 files (`Cargo.toml`, `crates/ui-egui/src/lib.rs`) — see [`patches/`](patches/) |
+| Upstream files changed | Workspace manifest and lock, UI services and canvas — see [`patches/`](patches/) |
 | Vendored crates | `vendor/winit/` — required by the manifest patch, copied in with the crate |
-| New port crate | `apps/wordcraft-android/` — 1554 lines of Rust plus resources |
+| New port crate | `apps/wordcraft-android/` — Rust shell, Android Activity and resources |
 
 ## What this repository is
 
@@ -29,7 +29,7 @@ CHANGELOG.md            what is in the published APK
 ```
 
 The Android layer is not a reimplementation. It is a shell crate that fills the same `Services`
-struct the desktop and web shells fill, so the real engine and the real egui UI run unchanged.
+struct the desktop and web shells fill, so the original engine and egui UI run on Android.
 
 ## Build it
 
@@ -50,6 +50,8 @@ keytool -genkeypair -keystore ks.jks -alias wordcraft -keyalg RSA -keysize 2048 
         -storepass android -keypass android -dname "CN=Local Test, O=Local, C=US"
 export CARGO_APK_RELEASE_KEYSTORE="$PWD/ks.jks" CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
 cargo apk build --release -p wordcraft-android
+apk_dir="${CARGO_TARGET_DIR:-target}/release/apk"
+/path/to/port/scripts/package-activity.sh "$apk_dir/wordcraft-unaligned.apk" "$apk_dir/wordcraft.apk"
 ```
 
 `scripts/android-env.sh` is the cross-compile environment this port was built with (the NDK linker
@@ -60,11 +62,11 @@ on the `.so` inside the APK.
 ## Install
 
 ```bash
-adb install -r wordcraft-0.5.0-arm64-v8a-v4.apk
+adb install -r wordcraft-arm64-test.apk
 ```
 or copy the APK to the device and open it (installing from unknown sources must be allowed).
 
-On first run, grant **Settings ▸ Apps ▸ WordCraft ▸ Special access ▸ All files access** if you want
+Insert Picture opens the Android document picker and reads the selected image with its URI grant. For the in-app document browser, grant **Settings ▸ Apps ▸ WordCraft ▸ Special access ▸ All files access** if you want
 the in-app picker to reach files outside the app's own folders. Without it, Android 10+ refuses a
 `read_dir` of shared storage by path, and the picker can only offer the app's own directory.
 
@@ -84,12 +86,11 @@ A tick means the check was *run*, not inferred; the wording says how far it goes
 
 **Before trusting the APK:** the source side is verified as listed above; runtime behaviour only as far
 as [`docs/PORT-NOTES.md`](docs/PORT-NOTES.md) says per fix, plus the tablet testing that produced those
-fixes. There is no automated device test in this repository.
+fixes. Current CI also exercises the Android Activity on an emulator.
 
 ## Known gaps
 
-- **Runtime verification is hand-testing only**, plus the source-side checks in the README. No
-  automated device test.
+- The behavior of individual keyboards, storage providers and tablet layouts is checked on hardware.
 - **All files access is a manual grant.** Until it is given, the picker can only offer the app's own
   directory (and says so on the locked root).
 - **A second window is a second Activity**, so it costs a second render surface and its own memory; on

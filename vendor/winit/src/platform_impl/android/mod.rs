@@ -508,6 +508,11 @@ impl<T: 'static> EventLoop<T> {
                     {
                         input_status = InputStatus::Unhandled
                     },
+                    // The NDK key event has no string payload for an IME bulk commit.
+                    // Let WordCraftActivity receive the original Java KeyEvent with its text.
+                    Keycode::Unknown if key.action() == KeyAction::Multiple => {
+                        input_status = InputStatus::Unhandled;
+                    },
                     keycode => {
                         let state = match key.action() {
                             KeyAction::Down => event::ElementState::Pressed,

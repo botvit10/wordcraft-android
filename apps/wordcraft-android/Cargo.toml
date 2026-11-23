@@ -63,6 +63,7 @@ min_sdk_version = 26
 target_sdk_version = 35
 
 [package.metadata.android.application]
+has_code = true
 label = "WordCraft"
 # Variant B (immersive fullscreen) is what fixed the menu bar sitting under the notification
 # bar on the tablet; variant A is the alternative — see res/values/styles.xml.
@@ -81,6 +82,7 @@ extract_native_libs = true
 # cargo-apk's default is only `orientation|keyboardHidden|screenSize`; these are the ones a
 # fullscreen, resizable native app handles itself.
 [package.metadata.android.application.activity]
+name = "ai.storyteller.wordcraft.WordCraftActivity"
 config_changes = "orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|density|uiMode|fontScale|keyboard|navigation|touchscreen"
 
 

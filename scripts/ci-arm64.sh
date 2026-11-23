@@ -45,13 +45,16 @@ printf '%s\n' "$lock_hash" | sha256sum --check
 out="$work/artifact"
 mkdir -p "$out/licenses"
 apk="$out/wordcraft-arm64-test.apk"
-cp "$CARGO_TARGET_DIR/release/apk/wordcraft.apk" "$apk"
+"$port/scripts/package-activity.sh" "$CARGO_TARGET_DIR/release/apk/wordcraft-unaligned.apk" "$apk"
 "$bt/apksigner" verify --verbose "$apk"
 "$bt/zipalign" -c 4 "$apk"
 badging=$("$bt/aapt2" dump badging "$apk")
 grep -F "package: name='ai.storyteller.wordcraft'" <<< "$badging"
 grep -Fx "native-code: 'arm64-v8a'" <<< "$badging"
-grep -F "launchable-activity: name='android.app.NativeActivity'" <<< "$badging"
+grep -F "launchable-activity: name='ai.storyteller.wordcraft.WordCraftActivity'" <<< "$badging"
+unzip -p "$apk" classes.dex > "$work/classes.dex"
+"$bt/dexdump" "$work/classes.dex" > "$work/dex.txt"
+grep -F "Lai/storyteller/wordcraft/WordCraftActivity;" "$work/dex.txt"
 unzip -p "$apk" lib/arm64-v8a/libwordcraft.so > "$work/libwordcraft.so"
 symbols=$("$bin/llvm-nm" --dynamic --defined-only "$work/libwordcraft.so")
 grep -E ' T android_main$' <<< "$symbols"

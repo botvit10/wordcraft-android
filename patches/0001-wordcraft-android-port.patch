@@ -13,7 +13,7 @@ index 98af82c..be5f8ca 100644
  resolver = "3"
  members = ["crates/*", "apps/*", "xtask"]
 diff --git a/crates/ui-egui/src/canvas.rs b/crates/ui-egui/src/canvas.rs
-index 06b9087..39f95ae 100644
+index 06b9087..e7ab592 100644
 --- a/crates/ui-egui/src/canvas.rs
 +++ b/crates/ui-egui/src/canvas.rs
 @@ -691,7 +691,10 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
@@ -28,6 +28,23 @@ index 06b9087..39f95ae 100644
          app.canvas.want_focus = false;
      }
      if resp.has_focus() {
+@@ -736,7 +739,15 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+         app.canvas.context_issue = app.session.run("review.suggestions", &json!({})).ok().filter(|v| !v.is_null());
+         app.canvas.context_synonyms = app.session.run("review.thesaurus", &json!({})).ok().and_then(|v| v.get("synonyms").cloned());
+     }
+-    resp.context_menu(|ui| context_menu(app, ui));
++    resp.context_menu(|ui| {
++        if cfg!(target_os = "android") {
++            // Keep the full spelling/context menu reachable above the IME in landscape.
++            let height = (ui.ctx().content_rect().height() - 20.0).max(1.0);
++            egui::ScrollArea::vertical().max_height(height).show(ui, |ui| context_menu(app, ui));
++        } else {
++            context_menu(app, ui);
++        }
++    });
+     // Stand down while the context menu owns the pointer so the two never double up;
+     // `context_menu_opened` also covers the click that dismisses the menu.
+     app.canvas.context_menu_open = resp.context_menu_opened();
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
 index 25b4465..4e72345 100644
 --- a/crates/ui-egui/src/lib.rs
@@ -56,7 +73,7 @@ index 25b4465..4e72345 100644
 +    /// web, and any host that has no way to) leaves `view.newWindow` showing its dialog.
 +    pub new_window: Option<Box<dyn Fn()>>,
  }
- 
+
  /// Files delivered asynchronously.
 @@ -372,6 +384,36 @@ impl WordApp {
              self.dialog = Some(dialogs::Dialog::SaveChanges { name, then: id.to_string(), params, document: self.session.document_id() });

@@ -35,3 +35,20 @@ jobs:
           path: ${{ runner.temp }}/wordcraft/artifact/
           if-no-files-found: error
           retention-days: 14
+      - name: Exercise keyboard history and image URI results on Android 35
+        timeout-minutes: 18
+        env:
+          CARGO_APK_RELEASE_KEYSTORE_PASSWORD: android
+        run: |
+          sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$sdk" 'emulator' 'system-images;android-35;google_apis;x86_64'
+          sudo chmod a+rw /dev/kvm
+          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n wordcraft-test -k 'system-images;android-35;google_apis;x86_64'
+          "$ANDROID_HOME/emulator/emulator" @wordcraft-test -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          trap 'adb emu kill || true' EXIT
+          timeout 300 adb wait-for-device
+          timeout 300 bash -c 'until adb shell getprop sys.boot_completed | grep -q 1; do sleep 2; done'
+          adb shell input keyevent KEYCODE_WAKEUP
+          adb shell wm dismiss-keyguard
+          export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/wordcraft/test.keystore"
+          scripts/test-device.sh "$RUNNER_TEMP/wordcraft/artifact/wordcraft-arm64-test.apk" "$RUNNER_TEMP/instrumentation"

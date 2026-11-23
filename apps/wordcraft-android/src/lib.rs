@@ -68,6 +68,8 @@ use wordcraft_engine::Session;
 use wordcraft_ui_egui::{FileDialogRequest, Services, UiState, WordApp};
 
 #[cfg(target_os = "android")]
+mod activity;
+#[cfg(target_os = "android")]
 mod clipboard;
 mod file_picker;
 mod modifiers;
@@ -127,6 +129,10 @@ fn file_dialog(req: FileDialogRequest) -> Receiver<Option<String>> {
     use file_picker::Kind;
     let (kind, title, suggested) = match req {
         FileDialogRequest::Open { purpose } => {
+            #[cfg(target_os = "android")]
+            if purpose == "picture" {
+                return activity::pick_picture();
+            }
             let (kind, title) = match purpose.as_str() {
                 "picture" => (Kind::Picture, "Insert or change picture"),
                 "document" => (Kind::Document, "Open document"),
@@ -431,9 +437,27 @@ impl Shell {
     }
 }
 
+// NativeActivity may keep a full-size surface under the keyboard. Preserve that surface
+// coordinate system and reserve only the part still covered after any Android resize.
+#[cfg(any(target_os = "android", test))]
+fn apply_keyboard_inset(ctx: &egui::Context, raw: &mut egui::RawInput, visible_height_px: i32) {
+    if let Some(screen) = raw.screen_rect {
+        let scale = raw.viewport().native_pixels_per_point.unwrap_or(1.0) * ctx.zoom_factor();
+        let bottom = if visible_height_px > 0 { (screen.height() - visible_height_px as f32 / scale).max(0.0) } else { 0.0 };
+        let insets = raw.safe_area_insets.get_or_insert_with(Default::default);
+        insets.0.bottom = insets.0.bottom.max(bottom);
+    }
+}
+
 impl eframe::App for Shell {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "android")]
+        let imported = activity::poll_picture(ctx, &mut self.inner);
         self.inner.logic(ctx);
+        #[cfg(target_os = "android")]
+        if let Some(path) = imported {
+            let _ = std::fs::remove_file(path);
+        }
         if self.prefs.due() {
             let bytes = prefs_bytes(&self.inner);
             self.prefs.store(&bytes);
@@ -449,6 +473,8 @@ impl eframe::App for Shell {
         // all, which is why nothing scrolled. A two-finger drag becomes one here (see
         // `touch_scroll`).
         self.touch.apply(raw, modifiers);
+        #[cfg(target_os = "android")]
+        activity::keyboard_input(_ctx, raw, &mut self.inner);
         self.inner.raw_input_hook(raw);
     }
 
@@ -472,6 +498,19 @@ impl eframe::App for Shell {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn keyboard_overlap_uses_visible_height_in_points() {
+        let ctx = egui::Context::default();
+        let mut raw = egui::RawInput::default();
+        raw.viewports.get_mut(&raw.viewport_id).unwrap().native_pixels_per_point = Some(2.0);
+        for (height, keyboard_top, expected) in [(400.0, 396, 202.0), (198.0, 396, 0.0), (400.0, -1, 0.0)] {
+            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, height)));
+            raw.safe_area_insets = None;
+            apply_keyboard_inset(&ctx, &mut raw, keyboard_top);
+            assert_eq!(raw.safe_area_insets.unwrap().0.bottom, expected);
+        }
+    }
 
     #[test]
     fn typing_space_keeps_the_canvas_ime_active() {

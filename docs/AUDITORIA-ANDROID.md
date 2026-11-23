@@ -80,3 +80,11 @@ No aparelho de teste:
 3. Copie texto com acentos entre WordCraft e outro app nos dois sentidos. Teste Recortar e Colar pelos menus. Copie uma foto como imagem em outro app e cole no documento. Salve e reabra para conferir a foto.
 
 Se a listagem do aparelho divergir, registre o título do seletor, o caminho exibido, a versão do Android e a permissão concedida. Repita com os mesmos arquivos em App folder para distinguir acesso a Download de filtragem.
+
+## Retorno do aparelho sobre e2d732f
+
+O usuário confirmou que digitar espaço mantém o teclado aberto e que o comando Colar do WordCraft funciona. O item escolhido no histórico do teclado não chegava ao editor. A captura de Inserir → Imagens mostrou o modo de imagem ativo em DCIM/Camera, com a lista vazia. No menu de correção, o teclado cobria as opções inferiores.
+
+A Activity abre o seletor Android com `ACTION_OPEN_DOCUMENT` e `image/*`. Lê a URI com a concessão da seleção e remove a cópia de cache depois da inserção. PNG e JPEG conservam os bytes originais. Fotos em outros formatos reconhecidos pelo Android podem ser convertidas em PNG. A conexão de entrada aceita texto em bloco e imagens oferecidos pelo teclado. A área disponível acima da IME passa a orientar o posicionamento e a rolagem do menu de contexto.
+
+No tablet, selecione uma foto de Câmera e um PNG de Downloads, salve e reabra o DOCX. No histórico do teclado, escolha uma frase com acentos anterior ao item mais recente, depois uma imagem se o teclado oferecer essa opção. Em paisagem, mantenha o teclado aberto, pressione uma palavra sublinhada e role até as opções inferiores.

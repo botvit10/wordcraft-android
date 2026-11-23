@@ -12,6 +12,7 @@
 # name, store and key password `android`), so `cargo apk build --release` produces a signed
 # APK rather than a debug-signed one.
 set -o pipefail
+port=$(cd "$(dirname "$0")/.." && pwd)
 repo="$1"
 crate="$2"
 shift 2
@@ -22,9 +23,8 @@ shift 2
 
 cd "$HOME/projects/$repo" || exit 1
 echo "=== building $crate in $repo ($(date)) ==="
-CARGO_APK_RELEASE_KEYSTORE="C:/Users/Admin/android-tools/$repo-sideload.keystore" \
-CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android \
-cargo apk build --release -p "$crate" "$@"
-status=$?
-echo "=== $crate exit=$status ($(date)) ==="
-exit $status
+export CARGO_APK_RELEASE_KEYSTORE="C:/Users/Admin/android-tools/$repo-sideload.keystore"
+export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
+cargo apk build --release -p "$crate" "$@" || exit $?
+apk_dir="${CARGO_TARGET_DIR:-target}/release/apk"
+"$port/scripts/package-activity.sh" "$apk_dir/wordcraft-unaligned.apk" "$apk_dir/wordcraft.apk"
