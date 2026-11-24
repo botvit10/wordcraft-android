@@ -24,8 +24,12 @@ timeout 30 bash -c 'until adb shell ime list -s -a | tr -d "\r" | grep -Fxq "$1"
 adb shell ime enable "$keyboard"
 adb shell ime set "$keyboard"
 adb shell settings put secure show_ime_with_hard_keyboard 1
-adb shell am instrument -w ai.storyteller.wordcraft.test/.DeviceTest | tee result.txt
-if ! grep -Fx 'INSTRUMENTATION_CODE: -1' result.txt; then
-    adb logcat -d -t 250 '*:E'
-    exit 1
-fi
+failed=0
+for probe in picker keyboard; do
+    if ! adb shell am instrument -w -e probe "$probe" ai.storyteller.wordcraft.test/.DeviceTest | tee "$probe.txt" ||
+       ! grep -Fxq 'INSTRUMENTATION_CODE: -1' "$probe.txt"; then
+        failed=1
+        adb logcat -d -t 250 '*:E'
+    fi
+done
+exit "$failed"

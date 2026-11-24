@@ -26,7 +26,13 @@ import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class DeviceTest extends Instrumentation {
-    @Override public void onCreate(Bundle args) { super.onCreate(args); start(); }
+    private String probe;
+
+    @Override public void onCreate(Bundle args) {
+        super.onCreate(args);
+        probe = args.getString("probe", "all");
+        start();
+    }
 
     @Override public void onStart() {
         Bundle results = new Bundle();
@@ -37,40 +43,46 @@ public final class DeviceTest extends Instrumentation {
             long deadline = SystemClock.elapsedRealtime() + 15000;
             while (!app.hasWindowFocus() && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(100);
             check(app.hasWindowFocus(), "editor window has focus");
-            checkImage(app, Bitmap.CompressFormat.PNG, "image/png", ".png", false);
-            checkImage(app, Bitmap.CompressFormat.JPEG, "image/jpeg", ".jpg", false);
-            results.putString("picker", "PNG/JPEG found in Android Files, selected, imported byte-for-byte and canceled");
-            InputMethodManager imm = app.getSystemService(InputMethodManager.class);
-            // The editor opens the keyboard through NativeActivity. Check the actual UI inset.
-            deadline = SystemClock.elapsedRealtime() + 20000;
-            while (height(app) < 1 && SystemClock.elapsedRealtime() < deadline) {
-                View page = app.getWindow().getDecorView();
-                tap(page.getWidth() * 0.5f, page.getHeight() * 0.55f);
-                SystemClock.sleep(1000);
+            if (!"keyboard".equals(probe)) {
+                checkImage(app, Bitmap.CompressFormat.PNG, "image/png", ".png", false);
+                checkImage(app, Bitmap.CompressFormat.JPEG, "image/jpeg", ".jpg", false);
+                results.putString("picker", "PNG/JPEG found in Android Files, selected, imported byte-for-byte and canceled");
             }
-            check(height(app) > 0 && height(app) < app.getWindow().getDecorView().getHeight(), "visible keyboard inset");
-            results.putString("imeInsets", "observed keyboard overlap");
-
-            // Commit the chosen historical entry while another value is the primary system clip.
-            SystemClock.sleep(1500);
-            String chosen = "ação — item anterior";
-            ClipboardManager clipboard = app.getSystemService(ClipboardManager.class);
-            runOnMainSync(() -> {
-                clipboard.setPrimaryClip(ClipData.newPlainText("test", "outro item"));
-                Bundle data = new Bundle();
-                data.putString("text", chosen);
-                imm.sendAppPrivateCommand(app.getCurrentFocus(), "ai.storyteller.wordcraft.test.TEXT", data);
-            });
-            awaitDocumentText(app, clipboard, chosen);
-            results.putString("keyboard", "input connection commit → native editor → Android clipboard");
-
-            checkImage(app, Bitmap.CompressFormat.PNG, "image/png", ".png", true);
-            results.putString("keyboardImage", "image committed by the keyboard appeared in the document");
+            if (!"picker".equals(probe)) checkKeyboard(app, results);
             finish(Activity.RESULT_OK, results);
         } catch (Throwable e) {
             results.putString("error", android.util.Log.getStackTraceString(e));
             finish(Activity.RESULT_CANCELED, results);
         }
+    }
+
+    private void checkKeyboard(Activity app, Bundle results) throws Exception {
+        InputMethodManager imm = app.getSystemService(InputMethodManager.class);
+        // The editor opens the keyboard through NativeActivity. Check the actual UI inset.
+        long deadline = SystemClock.elapsedRealtime() + 20000;
+        while (height(app) < 1 && SystemClock.elapsedRealtime() < deadline) {
+            View page = app.getWindow().getDecorView();
+            tap(page.getWidth() * 0.5f, page.getHeight() * 0.55f);
+            SystemClock.sleep(1000);
+        }
+        check(height(app) > 0 && height(app) < app.getWindow().getDecorView().getHeight(), "visible keyboard inset");
+        results.putString("imeInsets", "observed keyboard overlap");
+
+        // Commit the chosen historical entry while another value is the primary system clip.
+        SystemClock.sleep(1500);
+        String chosen = "ação — item anterior";
+        ClipboardManager clipboard = app.getSystemService(ClipboardManager.class);
+        runOnMainSync(() -> {
+            clipboard.setPrimaryClip(ClipData.newPlainText("test", "outro item"));
+            Bundle data = new Bundle();
+            data.putString("text", chosen);
+            imm.sendAppPrivateCommand(app.getCurrentFocus(), "ai.storyteller.wordcraft.test.TEXT", data);
+        });
+        awaitDocumentText(app, clipboard, chosen);
+        results.putString("keyboard", "input connection commit → native editor → Android clipboard");
+
+        checkImage(app, Bitmap.CompressFormat.PNG, "image/png", ".png", true);
+        results.putString("keyboardImage", "image committed by the keyboard appeared in the document");
     }
 
     private int height(Activity app) throws Exception {
@@ -174,27 +186,23 @@ public final class DeviceTest extends Instrumentation {
 
     private String pickFromSystem(Activity app, String filename) throws Exception {
         app.getClass().getMethod("pickPicture").invoke(app);
-        long deadline = SystemClock.elapsedRealtime() + 20000;
+        long deadline = SystemClock.elapsedRealtime() + 30000;
+        long nextTap = 0;
         boolean acted = false;
+        String lastWindow = "";
         while (SystemClock.elapsedRealtime() < deadline) {
             AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
-            if (!acted && root != null && root.getPackageName() != null &&
-                    root.getPackageName().toString().contains("documentsui")) {
-                if (filename == null) {
-                    check(getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK), "picker Back");
-                    acted = true;
-                } else {
-                    // Recents shows the newly created Camera image in the system picker.
-                    for (AccessibilityNodeInfo item : root.findAccessibilityNodeInfosByText(filename)) {
-                        if (!item.isVisibleToUser()) continue;
-                        Rect bounds = new Rect();
-                        item.getBoundsInScreen(bounds);
-                        if (!bounds.isEmpty()) {
-                            tap(bounds.exactCenterX(), bounds.exactCenterY());
-                            acted = true;
-                            break;
-                        }
+            if (root != null && root.getPackageName() != null) {
+                lastWindow = root.getPackageName().toString();
+                if (lastWindow.contains("documentsui") && SystemClock.elapsedRealtime() >= nextTap) {
+                    if (filename == null && !acted) {
+                        acted = getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
+                    } else if (filename != null) {
+                        // Tablet layouts can select a tile first and expose a separate Open button.
+                        boolean confirmed = acted && (clickLabel(root, "Open") || clickLabel(root, "Select"));
+                        if (!confirmed && clickLabel(root, filename)) acted = true;
                     }
+                    nextTap = SystemClock.elapsedRealtime() + 800;
                 }
             }
             String path = (String) app.getClass().getMethod("takePictureResult").invoke(app);
@@ -204,7 +212,26 @@ public final class DeviceTest extends Instrumentation {
             }
             SystemClock.sleep(150);
         }
-        throw new AssertionError("System image picker did not finish " + filename + " (selected=" + acted + ")");
+        throw new AssertionError("System image picker did not finish " + filename + " (tapped=" + acted + ", window=" + lastWindow + ")");
+    }
+
+    private boolean clickLabel(AccessibilityNodeInfo root, String label) {
+        for (AccessibilityNodeInfo item : root.findAccessibilityNodeInfosByText(label)) {
+            if (!item.isVisibleToUser() || !item.isEnabled()) continue;
+            String text = String.valueOf(item.getText());
+            String description = String.valueOf(item.getContentDescription());
+            if (!label.equalsIgnoreCase(text) && !label.equalsIgnoreCase(description)) continue;
+            for (AccessibilityNodeInfo row = item; row != null; row = row.getParent()) {
+                if (row.isClickable() && row.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
+            }
+            Rect area = new Rect();
+            item.getBoundsInScreen(area);
+            if (!area.isEmpty()) {
+                tap(area.exactCenterX(), area.exactCenterY());
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void check(boolean value, String message) {
