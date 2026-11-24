@@ -16,9 +16,11 @@ jar cf tests.jar -C classes .
 "$bt/aapt2" link res.zip -o test.apk -I "$platform" --min-sdk-version 26 --target-sdk-version 35 --manifest "$port/tests/android/AndroidManifest.xml"
 (cd dex && zip -q ../test.apk classes.dex)
 "$bt/apksigner" sign --ks "$CARGO_APK_RELEASE_KEYSTORE" --ks-pass env:CARGO_APK_RELEASE_KEYSTORE_PASSWORD test.apk
-adb install -r "$apk"
-adb install -r -t test.apk
+adb install --no-incremental -r "$apk"
+adb install --no-incremental -r -t test.apk
 keyboard=ai.storyteller.wordcraft.test/.TestKeyboard
+# InputMethodManager refreshes its service list asynchronously after package installation.
+timeout 30 bash -c 'until adb shell ime list -s -a | tr -d "\r" | grep -Fxq "$1"; do sleep 1; done' _ "$keyboard"
 adb shell ime enable "$keyboard"
 adb shell ime set "$keyboard"
 adb shell settings put secure show_ime_with_hard_keyboard 1
