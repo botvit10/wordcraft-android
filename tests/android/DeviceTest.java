@@ -39,7 +39,7 @@ public final class DeviceTest extends Instrumentation {
         try {
             Activity app = startActivitySync(new Intent(Intent.ACTION_MAIN)
                 .setClassName("ai.storyteller.wordcraft", "ai.storyteller.wordcraft.WordCraftActivity")
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
             long deadline = SystemClock.elapsedRealtime() + 15000;
             while (!app.hasWindowFocus() && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(100);
             check(app.hasWindowFocus(), "editor window has focus");
@@ -198,9 +198,12 @@ public final class DeviceTest extends Instrumentation {
                     if (filename == null && !acted) {
                         acted = getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
                     } else if (filename != null) {
-                        // Tablet layouts can select a tile first and expose a separate Open button.
-                        boolean confirmed = acted && (clickLabel(root, "Open") || clickLabel(root, "Select"));
-                        if (!confirmed && clickLabel(root, filename)) acted = true;
+                        // Recent images uses thumbnail-only tiles. In list mode the actual
+                        // document title and the separate Preview button have distinct nodes.
+                        if (!clickLabel(root, "List view")) {
+                            boolean confirmed = acted && (clickLabel(root, "Open") || clickLabel(root, "Select"));
+                            if (!confirmed && clickLabel(root, filename)) acted = true;
+                        }
                     }
                     nextTap = SystemClock.elapsedRealtime() + 800;
                 }

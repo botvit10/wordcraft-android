@@ -25,8 +25,9 @@ adb shell ime enable "$keyboard"
 adb shell ime set "$keyboard"
 adb shell settings put secure show_ime_with_hard_keyboard 1
 failed=0
-for probe in picker keyboard; do
-    if ! adb shell am instrument -w -e probe "$probe" ai.storyteller.wordcraft.test/.DeviceTest | tee "$probe.txt" ||
+for probe in keyboard picker; do
+    adb shell am force-stop ai.storyteller.wordcraft
+    if ! timeout 150 adb shell am instrument -w -e probe "$probe" ai.storyteller.wordcraft.test/.DeviceTest | tee "$probe.txt" ||
        ! grep -Fxq 'INSTRUMENTATION_CODE: -1' "$probe.txt"; then
         failed=1
         adb logcat -d -t 250 '*:E'
