@@ -97,7 +97,7 @@ public final class DeviceTest extends Instrumentation {
         for (int action : new int[] {MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
             MotionEvent event = MotionEvent.obtain(t, SystemClock.uptimeMillis(), action, x, y, 0);
             event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
-            sendPointerSync(event);
+            check(getUiAutomation().injectInputEvent(event, true), "touch delivered");
             event.recycle();
         }
     }
@@ -181,7 +181,7 @@ public final class DeviceTest extends Instrumentation {
             if (!acted && root != null && root.getPackageName() != null &&
                     root.getPackageName().toString().contains("documentsui")) {
                 if (filename == null) {
-                    sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+                    check(getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK), "picker Back");
                     acted = true;
                 } else {
                     // Recents shows the newly created Camera image in the system picker.
