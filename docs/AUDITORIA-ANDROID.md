@@ -1,5 +1,18 @@
 # Auditoria do port Android do WordCraft
 
+## Retomada em 26 de novembro de 2026
+
+Use o checkout de `botvit10/wordcraft-android` na branch `ci/android-arm64-baseline`. O último commit validado pelo GitHub Actions é `5e817fc`. O APK local corresponde a `593749d`. Entre esses commits só mudaram o workflow e os testes de dispositivo. O motor continua em **WordCraft 0.5.0**, fixado em `storytold/wordcraft@2ffba93b5189410a415970be179dcf481092d756`. A atualização depende de autorização explícita do usuário.
+
+O próximo passo é obter o resultado deste APK no tablet. O usuário já confirmou na compilação anterior que DOCX abre, que digitar espaço mantém o teclado aberto e que **Colar** no menu do WordCraft funciona. A queixa de colagem restante veio do **histórico do teclado**. [Resultados e pendências](#validação-da-integração-em-android-15) · [Prompt para o próximo chat](PROMPT-CONTINUACAO.txt)
+
+| Marco | O que mudou |
+|---|---|
+| `4ee29b9` | Referência inicial de compilação ARM64 local e no Actions. |
+| `e2d732f` | Filtros distintos no seletor interno, correção de foco ao digitar espaço e integração do comando Colar com a área de transferência Android. O seletor de imagens ainda dependia da listagem por caminho. |
+| `d40e7dc` a `593749d` | Seletor Android para inserir ou trocar imagens, conexão com o teclado para receber texto e imagens e menu de correção ajustado à área visível em paisagem. |
+| `5e817fc` | Validação automatizada no Android 15. O teste abre a lista de Arquivos para tocar no nome do documento. A grade também oferece um botão separado de pré-visualização. |
+
 ## Base reproduzida
 
 O commit `5f0ed9162c19a5b4904545ef2667885fe83d84d2` de `botvit10/wordcraft-android` coincide com o HEAD consultado de `kanaaka/wordcraft-android`. O changelog identifica a distribuição do port como v0.1.2. O código do editor vem de `storytold/wordcraft` 0.5.0, commit `2ffba93b5189410a415970be179dcf481092d756`. São duas versões distintas. [Motor no commit auditado](https://github.com/storytold/wordcraft/tree/2ffba93b5189410a415970be179dcf481092d756)
@@ -88,3 +101,32 @@ O usuário confirmou que digitar espaço mantém o teclado aberto e que o comand
 A Activity abre o seletor Android com `ACTION_OPEN_DOCUMENT` e `image/*`. Lê a URI com a concessão da seleção e remove a cópia de cache depois da inserção. PNG e JPEG conservam os bytes originais. Fotos em outros formatos reconhecidos pelo Android podem ser convertidas em PNG. A conexão de entrada aceita texto em bloco e imagens oferecidos pelo teclado. A área disponível acima da IME passa a orientar o posicionamento e a rolagem do menu de contexto.
 
 No tablet, selecione uma foto de Câmera e um PNG de Downloads, salve e reabra o DOCX. No histórico do teclado, escolha uma frase com acentos anterior ao item mais recente, depois uma imagem se o teclado oferecer essa opção. Em paisagem, mantenha o teclado aberto, pressione uma palavra sublinhada e role até as opções inferiores.
+
+### Validação da integração em Android 15
+
+No emulador de tablet em paisagem, o APK ARM64 com o código de aplicação de `593749d` abriu **Inserir → Imagens** na tela Recentes do seletor Android. Um PNG de Download e um JPEG de DCIM/Camera apareceram no filtro padrão. A seleção das duas miniaturas produziu duas imagens distintas no mesmo documento.
+
+Com o teclado de teste em outro processo, o editor recebeu “histórico ação” enquanto a área de transferência continha “item atual”. O mesmo teclado enviou uma terceira imagem por `commitContent`, que apareceu na página. Com a IME visível, manter o dedo sobre uma palavra sublinhada abriu o menu de correção acima do teclado. A última opção ficou visível ao soltar o dedo. O teclado e a galeria do aparelho do usuário ainda exigem a repetição desses gestos.
+
+Os 160 testes no Linux passaram. A suíte inclui 12 testes do port, 60 de DOCX, 66 de formatos e 22 de PDF. O teste de regressão salva o PNG e o JPEG no mesmo DOCX, reabre o documento com o filtro de Arquivo → Abrir e confere as duas mídias.
+
+No teste local de **Arquivo → Abrir → Procurar**, o seletor de documentos abriu `WordCraft-abertura.docx` na pasta do app. A página exibiu o texto e as duas imagens do arquivo de amostra. Em outra tentativa, o emulador local sem aceleração de CPU registrou um ANR de entrada após `Ctrl+S` em um documento novo. A causa permanece em aberto. A gravação seguida de reabertura desse documento específico continua pendente no tablet.
+
+O GitHub Actions passou no commit `5e817fc`. Compilou e assinou o APK ARM64, verificou a assinatura, o alinhamento e a ABI, passou nos 12 testes do port e executou o APK no emulador Android 15. A instrumentação selecionou PNG e JPEG pelo aplicativo Arquivos, comparou os bytes e testou o cancelamento. Um serviço de teclado separado enviou a entrada histórica de texto, que foi recuperada do documento pelo comando de cópia, e uma imagem, cuja renderização foi conferida na tela. [Execução 45383617143](https://github.com/botvit10/wordcraft-android/actions/runs/45383617143) · [Artifact com APK, SHA-256 e licenças](https://github.com/botvit10/wordcraft-android/actions/runs/45383617143/artifacts/14914923914)
+
+**APK local.** Neste workspace, o arquivo é `/workspace/wordcraft-test-593749d/wordcraft-arm64-test.apk`. SHA-256 `17fd19f2b97aeff48c8773bc63f62820806cff25ac560af0b46cecbc26207155`. A pasta contém também as capturas do seletor e da correção ortográfica. O APK local conserva o certificado do APK local anterior. O Actions gera uma chave de teste por execução e inclui o checksum correspondente no artifact, com expiração prevista para 8 de dezembro de 2026.
+
+**Onde investigar se o tablet divergir.**
+
+- **Imagens.** Em `apps/wordcraft-android/java/WordCraftActivity.java`, confira `pickPicture` e `onActivityResult`. O pedido usa `ACTION_OPEN_DOCUMENT`, `CATEGORY_OPENABLE` e `image/*`. O provedor devolve uma URI que a Activity lê para o cache. Em `apps/wordcraft-android/src/activity.rs`, o resultado segue para o comando do editor. Arquivo → Abrir continua em `file_picker.rs`.
+- **Colagem.** A conexão de entrada na mesma Activity recebe texto do teclado e imagens por `commitContent`. O código Rust entrega os eventos ao editor. O caminho do comando Colar do próprio WordCraft está em `apps/wordcraft-android/src/clipboard.rs`.
+- **Correção ortográfica.** A Activity mede a altura visível com a IME aberta. `apps/wordcraft-android/src/lib.rs` aplica o espaço ocupado pelo teclado. O ajuste do menu do canvas está em `patches/0001-wordcraft-android-port.patch`.
+- **Reprodução.** O workflow `.github/workflows/android-arm64.yml` usa `scripts/ci-arm64.sh`, `scripts/package-activity.sh` e `scripts/test-device.sh`. As verificações do seletor e do teclado estão em `tests/android/DeviceTest.java` e `tests/android/TestKeyboard.java`.
+
+**Reteste no tablet, nesta ordem.**
+
+1. Em Inserir → Imagens, selecione o PNG de Downloads e o JPEG de Câmera. Coloque o cursor em outra posição entre as inserções para conservar as duas imagens. Salve pelo menu e reabra em Arquivo → Abrir. Confira as duas imagens.
+2. No histórico do teclado habitual, escolha uma frase acentuada anterior ao último item copiado. Confira o texto exato e tente uma imagem, se o teclado a oferecer.
+3. Em paisagem, mantenha o teclado aberto, pressione uma palavra sublinhada e toque em uma opção inferior do menu de correção. Confira também se digitar espaço mantém o teclado estável.
+
+Se algo falhar, registre qual APK foi instalado, modelo e versão do Android, nome do teclado, gesto e resultado observado. Para imagens, inclua a origem do arquivo e a tela do seletor. Para travamento ao salvar, diferencie menu, botão e atalho físico.
